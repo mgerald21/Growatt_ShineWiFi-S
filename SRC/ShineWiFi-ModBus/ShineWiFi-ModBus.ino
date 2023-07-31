@@ -86,8 +86,11 @@ uint16_t u16PacketCnt = 0;
     WebServer httpServer(80);
 #endif
 
+String hostname = "";
 
 WiFiManager wm;
+WiFiManagerParameter* custom_hostname = NULL;
+const static char* hostnamefile = "/hostname";
 #if MQTT_SUPPORTED == 1
     WiFiManagerParameter* custom_mqtt_server = NULL;
     WiFiManagerParameter* custom_mqtt_port = NULL;
@@ -127,7 +130,7 @@ void WiFi_Reconnect()
         Log.print(F("local IP:"));
         Log.println(WiFi.localIP());
         Log.print(F("Hostname: "));
-        Log.println(HOSTNAME);
+        Log.println(hostname.c_str());
 
         Log.println(F("WiFi reconnected"));
 
@@ -137,8 +140,8 @@ void WiFi_Reconnect()
 
 // Connection can fail after sunrise. The stick powers up before the inverter.
 // So the detection of the inverter will fail. If no inverter is detected, we have to retry later (s. loop() )
-// The detection without running inverter will take several seconds, because the ModBus-Lib has a timeout of 2s 
-// for each read access (and we do several of them). The WiFi can crash during this function. Perhaps we can fix 
+// The detection without running inverter will take several seconds, because the ModBus-Lib has a timeout of 2s
+// for each read access (and we do several of them). The WiFi can crash during this function. Perhaps we can fix
 // this by using the callback function of the ModBus-Lib
 void InverterReconnect(void)
 {
@@ -189,6 +192,7 @@ void saveParamCallback()
     config.mqttpwd = custom_mqtt_pwd->getValue();
 
     saveConfig(&config);
+    prefs.putString(hostnamefile, custom_hostname->getValue());
 
     Serial.println(F("[CALLBACK] saveParamCallback complete"));
 }
@@ -212,7 +216,6 @@ void setup()
     #else
         Log.disableSerial(true);
     #endif
-        MDNS.begin(HOSTNAME);
     #ifdef ENABLE_TELNET_DEBUG
         Log.addPrintStream(std::make_shared<TelnetSerialStream>(telnetSerialStream));
     #endif
@@ -230,9 +233,7 @@ void setup()
     pinMode(LED_RT, OUTPUT);
     pinMode(LED_BL, OUTPUT);
 
-    #if MQTT_SUPPORTED == 1
-        prefs.begin("ShineWifi");
-    #endif
+    prefs.begin("ShineWifi");
 
     #if ENABLE_DOUBLE_RESET == 1
         if (drd->detectDoubleReset()) {
@@ -241,8 +242,23 @@ void setup()
         }
     #endif
 
-    WiFi.hostname(HOSTNAME);
+    hostname = prefs.getString(hostnamefile, HOSTNAME);
+    Log.print(F("Hostname: "));
+    Log.println(hostname.c_str());
+
+    WiFi.setPhyMode(WIFI_PHY_MODE_11B);
+    #ifdef ESP32
+        // ESP32 needs this here (before WiFi.mode) for core 2.0.0
+        WiFi.hostname(hostname.c_str());
+    #endif
     WiFi.mode(WIFI_STA); // explicitly set mode, esp defaults to STA+AP
+    #ifdef ESP8266
+        // ESP8266 needs this here (after WiFi.mode)
+        WiFi.hostname(hostname.c_str());
+    #endif
+
+    custom_hostname = new WiFiManagerParameter("hostname", "hostname", hostname.c_str(), 40);
+    wm.addParameter(custom_hostname);
 
     Log.begin();
     #if MQTT_SUPPORTED == 1
@@ -296,6 +312,7 @@ void setup()
     Inverter.InitProtocol();
     InverterReconnect();
     httpServer.begin();
+    MDNS.begin(hostname.c_str());
 }
 
 #if MQTT_SUPPORTED == 1
@@ -321,7 +338,7 @@ void SetupMqttWifiManagerMenu(MqttConfig &mqttConfig) {
 
 /**
  * @brief create custom wifimanager menu entries
- * 
+ *
  * @param enableCustomParams enable custom params aka. mqtt settings
  */
 void setupMenu(bool enableCustomParams){
@@ -332,7 +349,7 @@ void setupMenu(bool enableCustomParams){
     menu.push_back("sep");
     menu.push_back("erase");
     menu.push_back("restart");
-    
+
     wm.setMenu(menu); // custom menu, pass vector
 }
 
@@ -370,7 +387,7 @@ void sendMqttJson(void)
     shineMqtt.mqttPublish(doc);
 }
 #endif
-    
+
 void StartConfigAccessPoint(void)
 {
     String Text;
